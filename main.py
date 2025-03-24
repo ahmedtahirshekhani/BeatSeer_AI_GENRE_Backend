@@ -252,7 +252,7 @@ def get_artist_analysis(
 
         if not genre:
             genres = fetch_genre_from_musicbrainz(artist_name)
-            genre = genres[0] if genres else "Unknown"
+            genre = genres[0] if genres else "Classic"
             # print("MusicBrainz Genre:", genre)
 
      
