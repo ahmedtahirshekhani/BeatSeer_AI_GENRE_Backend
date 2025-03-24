@@ -102,7 +102,7 @@ def get_artist_analysis(
         Use the genre of {{artist_name}} from your knowledge.
 
     If genre not found:
-        Use "General" as the genre.
+        Use "Classic" as the genre.
 
     Now, provide insights and analysis for {{genre}} and {{artist_name}}:  
 
