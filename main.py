@@ -9,6 +9,7 @@ import anthropic
 import json
 import musicbrainzngs
 import os
+import pylast
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -27,25 +28,38 @@ app.add_middleware(
 
 def fetch_artist_details(sp, artist_name: str):
     artist_data = sp.search(q=artist_name, type='artist', limit=1)
-
-    df_f = pd.DataFrame()
-
-    if artist_data['artists']['items']:
-        artist_info = artist_data['artists']['items'][0]
-
-        artist_details = {
-            'artist_id': artist_info['id'],
-            'name': artist_info['name'],
-            'popularity': artist_info['popularity'],
-            'genres': artist_info['genres'],
-            'followers': artist_info['followers']['total'],
-            'external_url': artist_info['external_urls']['spotify'],
-            'image': artist_info['images'][0]['url'] if artist_info['images'] else None,
-        }
-        
-        return artist_details
-    else:
+    
+    if not artist_data['artists']['items']:
         return {"error": "Artist not found"}
+    
+    artist_info = artist_data['artists']['items'][0]
+    artist_id = artist_info['id']
+    
+    top_tracks = sp.artist_top_tracks(artist_id)
+    albums = sp.artist_albums(artist_id, album_type='album', limit=3)
+    
+    artist_details = {
+        'artist_id': artist_id,
+        'name': artist_info['name'],
+        'popularity': artist_info['popularity'],
+        'genres': artist_info['genres'],
+        'followers': artist_info['followers']['total'],
+        'external_url': artist_info['external_urls']['spotify'],
+        'image': artist_info['images'][0]['url'] if artist_info['images'] else None,
+        'top_tracks': [{
+            'name': track['name'],
+            'popularity': track['popularity'],
+            'album': track['album']['name'],
+            'release_date': track['album']['release_date']
+        } for track in top_tracks['tracks'][:3]],  # Top 3 tracks
+        'albums': [{
+            'name': album['name'],
+            'release_date': album['release_date'],
+            'total_tracks': album['total_tracks']
+        } for album in albums['items'][:3]]  # Top 3 albums
+    }
+    
+    return artist_details
 
 musicbrainzngs.set_useragent("BeetSeer_AI_Backend", "1.0", "ahmedtahir.developer@gmail.com")
 
@@ -77,6 +91,53 @@ def fetch_genre_from_musicbrainz(artist_name: str):
         print("Error fetching genre from MusicBrainz:", e)
         return []
 
+def setup_lastfm_client():
+    API_KEY = os.getenv("LASTFM_API_KEY")
+    API_SECRET = os.getenv("LASTFM_API_SECRET")
+    return pylast.LastFMNetwork(api_key=API_KEY, api_secret=API_SECRET)
+
+# Add this new function to fetch Last.fm data
+def fetch_lastfm_artist_data(artist_name: str):
+    # print("Fetching Last.fm data for artist:", artist_name)
+    try:
+        lastfm = setup_lastfm_client()
+        artist = lastfm.get_artist(artist_name)
+        
+        data = {
+            "listeners": artist.get_listener_count(),
+            "playcount": artist.get_playcount(),
+            "bio": artist.get_bio_summary(),
+            "tags": [tag.item.get_name() for tag in artist.get_top_tags()[:5]],  # Top 5 tags
+            "top_tracks": [
+                {"name": track.item.get_name(), "playcount": track.weight}
+                for track in artist.get_top_tracks(limit=3)  # Top 3 tracks
+            ],
+            "top_albums": [
+                {"name": album.item.get_name(), "playcount": album.weight}
+                for album in artist.get_top_albums(limit=2)  # Top 2 albums
+            ]
+        }
+        # print("Last.fm Data:", data)
+        return data
+    except pylast.WSError as e:
+        print(f"Last.fm Error: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected Last.fm error: {e}")
+        return None
+
+LASTFM_PROMPT_ADDITION = """
+Last.fm Data for {{artist_name}}:
+- Listener Count: {{lastfm.listeners}}
+- Total Plays: {{lastfm.playcount}}
+- Top Tags (Genres): {{lastfm.tags|join(', ')}}
+- Similar Artists: {{lastfm.similar|join(', ')}}
+- Top Tracks:
+{% for track in lastfm.top_tracks %}
+  - {{track.name}} ({{track.playcount}} plays)
+{% endfor %}
+"""
+
 # Test endpoint
 @app.get("/")
 def read_root():
@@ -96,55 +157,65 @@ def get_artist_analysis(
 
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     prompt = """
-    You are an AI model tasked with providing the following information about genre analysis and media suitability. Respond strictly in JSON format.
+    You are an AI model tasked with providing comprehensive music analysis combining Spotify and Last.fm data. Respond strictly in JSON format.
+
+    Data Sources:
+    - Spotify Data: {{spotify_data}}
+    - Last.fm Data: {{lastfm_data}}
 
     If genre is Unknown:
-        Use the genre of {{artist_name}} from your knowledge.
-
+        Use the most common tag from Last.fm ({{lastfm_data.tags|join(', ')}}) or your knowledge.
     If genre not found:
         Use "Classic" as the genre.
 
-    Now, provide insights and analysis for {{genre}} and {{artist_name}}:  
+    Analysis Framework:
 
-    1. Genre Popularity & Compatibility:  
-    - Provide a score (1-100) for {{genre}}, assessing their popularity and alignment with mainstream music trends.  
-    - Identify which genre {{artist_name}}'s music is most compatible with, rating the level of compatibility as LOW, MEDIUM, HIGH, or VERY HIGH.  
-    - Include comparisons to potential genres.  
+    1. Genre Popularity & Compatibility:
+        - Consider Spotify popularity ({{spotify_data.popularity}}/100) with {{spotify_data.followers}} followers
+        - Compare with Last.fm metrics: {{lastfm_data.listeners}} listeners and {{lastfm_data.playcount}} plays
+        - Cross-reference genre tags: 
+        • Spotify: {{spotify_data.genres|join(', ') if spotify_data.genres else 'None'}}
+        • Last.fm: {{lastfm_data.tags|join(', ')}}
+        - Provide compatibility score (1-100) and level (LOW/MEDIUM/HIGH/VERY HIGH)
+        - Note similar artists from Last.fm: {{lastfm_data.similar|join(', ')}}
 
-    2. Genre Evolution & Trends:  
-    - Analyze how {{artist_name}}'s genre(s) have evolved over time.  
-    - Highlight key trends and their impact on audience engagement and future growth.  
+    2. Genre Evolution & Trends:
+        - Analyze genre development using:
+        • Spotify release dates (oldest: {{spotify_data.albums[-1].release_date}})
+        • Last.fm play patterns (top tracks: {{lastfm_data.top_tracks[0].name}})
+        - Identify audience shifts through Last.fm listener trends
 
-    3. Growth Indicators & Industry Position:  
-    - What are the key indicators of growth for {{artist_name}} in the music industry?  
-    - Compare {{artist_name}}'s popularity and fanbase growth with other artists in similar genres.  
-    - Provide insights into their market position, including rankings in Bollywood, Hindi pop, and Sufi music, as well as their standing among international artists.  
+    3. Growth Indicators:
+        - Compare platform metrics:
+        • Spotify followers vs Last.fm listeners ratio
+        • Track popularity across platforms
+        - Assess cross-platform appeal using similar artists
 
-    4. Best Uses in Media & Entertainment:  
-    - Recommend the most suitable media applications for {{artist_name}}'s music:  
-    - Films, documentaries, commercials, TV shows, or other formats.  
-    - Identify the best scene types where their music excels:  
-    - "Character development moments," "Emotional transitions," "Rural/small town settings," "Reflective montages."  
-    - Explain its effectiveness in storytelling, character arcs, and emotional engagement.  
+    4. Media Suitability:
+        - Recommend applications based on:
+        • Spotify audio features
+        • Last.fm listener demographics
+        - Highlight scene types considering:
+        • Top tracks from both platforms
+        • Genre characteristics from crowd-sourced tags
 
-    5. Sound Elements & Distinctive Style:  
-    - Describe the key musical elements that define {{genre}}.  
-    - Instrumentation, vocal style, dynamic range, and signature features.  
-    - Discuss how these elements contribute to mood and emotional depth in productions.  
+    5. Sound Analysis:
+        - Describe style using:
+        • Spotify instrumentation data
+        • Last.fm user-generated tags
+        - Identify signature elements from:
+        • Most played tracks (Last.fm)
+        • Top albums (Spotify)
 
-    6. Technical & Placement Strategies:  
-    - Provide insights into the technical aspects of production, including:  
-    - Mixing for film scenes, edit points, and instrumental availability.  
-    - Discuss how {{genre}}'s music can be used in:  
-    - Foreground vs. background placements in film, TV, and advertisements.  
-    - Evaluate placement strategies such as:  
-    - "Perfect for character-driven narratives," "Strong fit for heartland stories," "Authentic backdrop for American lifestyle themes," "Ideal for emotional story arcs."  
+    6. Technical Strategies:
+        - Suggest placements based on:
+        • Spotify's available instrumental versions
+        • Last.fm's foreground/background play patterns
+        - Optimize using:
+        • Edit points from track durations
+        • Emotional arcs from lyrical analysis
 
-    Objective:  
-    Deliver a structured breakdown of {{artist_name}}'s genre(s) with insights on popularity, evolution, media application, and technical details, ensuring a clear perspective on their place in the industry and their impact on storytelling.  
-
-    Your response should be a JSON object structured like this (Example):
-
+    Enhanced JSON Structure:
     {
         "artist_origin": {
             "country": "Pakistan"
@@ -207,18 +278,19 @@ def get_artist_analysis(
         ]
     }
 """
-
-    def get_claude(genre, artist_name, prompt=prompt):
-      
+    def get_claude(spotify_data, lastfm_data, genre, artist_name, prompt=prompt):
         try:
             formatted_prompt = (
                 prompt.replace("{{genre}}", genre)
                     .replace("{{artist_name}}", artist_name)
+                    .replace("{{spotify_data}}", json.dumps(spotify_data, indent=2))
+                    .replace("{{lastfm_data}}", json.dumps(lastfm_data, indent=2))
             )
+            # print("Formatted Prompt:", formatted_prompt)
 
             message = client.messages.create(
                 model="claude-3-5-haiku-20241022",
-                max_tokens=1500,
+                max_tokens=2000,  # Increased for additional data
                 temperature=0.7,
                 system="You are an expert in music and genre analysis. Always return a valid JSON object, with no extra text.",
                 messages=[{"role": "user", "content": formatted_prompt}]
@@ -231,8 +303,8 @@ def get_artist_analysis(
     if spotify_CLIENT_ID and spotify_CLIENT_SECRET and artist:
         artist_origin = get_artist_country(artist)
         print("Artist Origin:", artist_origin)
-        if artist_origin in ["RU", "CN"]:
-            return {'artist_name': artist, 'analysis':{"artist_origin":{"message": "We cannot provide analysis for artists from Russia and China because of data restrictions."}}} 
+        if not artist_origin in ['US', 'CA', 'MX', 'GB', 'FR', 'DE', 'IT', 'ES', 'NL', 'BE', 'CH', 'AT', 'SE', 'NO', 'DK', 'FI', 'IE', 'PT', 'LU', 'IS']:
+            return {'artist_name': artist, 'analysis': {"artist_origin": {"message": f"We cannot provide analysis for artists from {artist_origin}."}}} 
 
         CLIENT_ID = spotify_CLIENT_ID
         CLIENT_SECRET = spotify_CLIENT_SECRET
@@ -240,23 +312,31 @@ def get_artist_analysis(
         sp = spotipy.Spotify(auth_manager=auth_manager)
 
         artist_details = fetch_artist_details(sp, artist)
-        print("artist_details: ", artist_details)
+        # print("artist_details: ", artist_details)
 
         if "error" in artist_details:
             raise HTTPException(status_code=404, detail=artist_details["error"])
+        
+        lastfm_data = fetch_lastfm_artist_data(artist)
 
         artist_name = artist_details['name']
-        popularity = artist_details['popularity']
+        # popularity = artist_details['popularity']
         genre = artist_details['genres'][0] if artist_details['genres'] else None
         # print("Spotify Genre:", genre)
 
-        if not genre:
-            genres = fetch_genre_from_musicbrainz(artist_name)
-            genre = genres[0] if genres else "Classic"
+        genre = (artist_details['genres'][0] if artist_details['genres'] 
+            else (fetch_genre_from_musicbrainz(artist_name)[0] 
+            if fetch_genre_from_musicbrainz(artist_name) 
+            else "Classic"))
             # print("MusicBrainz Genre:", genre)
 
-     
-        response = get_claude(genre, artist_name)
+        spotify_data = {
+            'popularity': artist_details['popularity'],
+            'followers': artist_details['followers'],
+            'top_tracks': artist_details['top_tracks'],
+            'albums': artist_details['albums']
+        }
+        response = get_claude(spotify_data, lastfm_data, genre, artist_name)
         # print("Response: ", response)
 
         try:
