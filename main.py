@@ -157,11 +157,19 @@ def get_artist_analysis(
 
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     prompt = """
-    You are an AI model tasked with providing comprehensive music analysis combining Spotify and Last.fm data. Respond strictly in JSON format.
+    You are an AI music analyst specializing in comprehensive artist evaluations. Analyze the provided Spotify and Last.fm data and return a STRICTLY FORMATTED JSON response with ALL fields as arrays/lists.
 
-    Data Sources:
-    - Spotify Data: {{spotify_data}}
-    - Last.fm Data: {{lastfm_data}}
+    RULES:
+    1. MUST return valid JSON with ALL values as arrays - even single items must be in arrays
+    2. Use ONLY the following structure - no additional fields
+    3. For empty data, return empty arrays []
+    4. Never include markdown or code block syntax
+
+    DATA SOURCES:
+    - Spotify: {{spotify_data}}
+    - Last.fm: {{lastfm_data}}
+
+    ANALYSIS INSTRUCTIONS:
 
     If genre is Unknown:
         Use the most common tag from Last.fm ({{lastfm_data.tags|join(', ')}}) or your knowledge.
@@ -215,66 +223,67 @@ def get_artist_analysis(
         • Edit points from track durations
         • Emotional arcs from lyrical analysis
 
-    Enhanced JSON Structure:
+    RESPONSE TEMPLATE - MUST FOLLOW EXACTLY:
     {
-        "artist_origin": {
-            "country": "Pakistan"
-        },
         "genre_info": {
-            "genre": "Alternative Country",
-            "score": 85,
-            "compatibility": "HIGH"
+            "genre": ["pop"],  // Always array
+            "score": [85],     // Always array
+            "compatibility": ["HIGH"]  // Always array
         },
         "genre_evolution": [
-            "Strong roots in Alternative Country with modern production elements",
-            "High potential for mainstream crossover while maintaining authenticity",
-            "Genre compatibility suggests strong audience retention"
+            "Evolution statement 1",
+            "Evolution statement 2"
         ],
         "growth_indicators": [
-            "Consistent upward trajectory predicted over 18 months.",
-            "Strong appeal to both traditional and modern audiences",
-            "Significant potential for festival circuit impact"
+            "Indicator 1",
+            "Indicator 2",
+            "Indicator 3"
         ],
         "market_position": [
-            "Atif Aslam is a top-tier artist in Bollywood and the Hindi Pop scene, with a strong international following.",
-            "He has a prominent position among South Asian music artists globally."
+            "Position statement 1",
+            "Position statement 2"
         ],
-        "genres": ["Drama", "Coming of Age", "Indie Film"],
+        "genres": [
+            "Genre 1",
+            "Genre 2",
+            "Genre 3"
+        ],
         "sceneTypes": [
-            "Character development moments",
-            "Emotional transitions",
-            "Rural/small town settings",
-            "Reflective montages"
+            "Scene type 1",
+            "Scene type 2",
+            "Scene type 3",
+            "Scene type 4"
         ],
-        "potentialGenres": ["Romance", "Road Trip", "Documentary"],
+        "potentialGenres": [
+            "Alternative genre 1",
+            "Alternative genre 2"
+        ],
         "placementStrategies": [
-            "Perfect for character-driven narratives",
-            "Strong fit for heartland stories",
-            "Authentic backdrop for American lifestyle themes",
-            "Ideal for emotional story arcs"
+            "Strategy 1",
+            "Strategy 2",
+            "Strategy 3",
+            "Strategy 4"
         ],
         "best_uses": [
-            "Pivotal character decisions",
-            "Transitional sequences",
-            "Emotional climax scenes",
-            "Opening/closing sequences"
+            "Use case 1",
+            "Use case 2",
+            "Use case 3"
         ],
-        "impact": [
-            "Strong emotional resonance for heartfelt moments",
-            "Authentic storytelling through musical narrative",
-            "Effectively underscores character development"
+        "impact_statements": [
+            "Impact 1",
+            "Impact 2"
         ],
         "sound_elements": [
-            "Authentic Alternative Country instrumentation",
-            "Clear vocal storytelling",
-            "Strong melodic hooks for scene enhancement",
-            "Versatile dynamic range"
+            "Element 1",
+            "Element 2",
+            "Element 3",
+            "Element 4"
         ],
         "technical_details": [
-            "Clean mix suitable for dialogue overlay",
-            "Multiple edit points for flexible scene timing",
-            "Available instrumental versions recommended",
-            "Suitable for both foreground and background placement"
+            "Feature 1",
+            "Feature 2",
+            "Feature 3",
+            "Feature 4"
         ]
     }
 """
