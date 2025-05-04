@@ -147,6 +147,10 @@ def read_root():
 
 def get_artist_analysis(
     artist: str = Query(...),
+    genre: str = Query(None),
+    projected_growth: str = Query(None),
+    genre_compatibility: str = Query(None),
+    artist_country: str = Query(None),
     # youTubeApiKey: str = Query(...),
     spotify_CLIENT_ID: str = Query(...),
     spotify_CLIENT_SECRET: str = Query(...)
@@ -287,7 +291,137 @@ def get_artist_analysis(
         ]
     }
 """
+    prompt2 = """
+    You are an AI music analyst specializing in comprehensive artist evaluations. Analyze the provided Spotify and Last.fm data and return a STRICTLY FORMATTED JSON response with ALL fields as arrays/lists.
+
+    RULES:
+    1. MUST return valid JSON with ALL values as arrays - even single items must be in arrays
+    2. Use ONLY the following structure - no additional fields
+    3. For empty data, return empty arrays []
+    4. Never include markdown or code block syntax
+
+    DATA SOURCES:
+    - Spotify: {{spotify_data}}
+    - Last.fm: {{lastfm_data}}
+    - Genre: {{genre}}
+    - Artist Name: {{artist_name}}
+    - Projected Growth score: {{projected_growth}}
+    - Genre Compatibility: {{genre_compatibility}}
+    - Artist Country: {{artist_country}}
+
+
+    Analysis Framework:
+
+    1. Genre Popularity & Compatibility:
+        - Consider Spotify popularity ({{spotify_data.popularity}}/100) with {{spotify_data.followers}} followers
+        - Compare with Last.fm metrics: {{lastfm_data.listeners}} listeners and {{lastfm_data.playcount}} plays
+        - Cross-reference genre tags: 
+        • Spotify: {{spotify_data.genres|join(', ') if spotify_data.genres else 'None'}}
+        • Last.fm: {{lastfm_data.tags|join(', ')}}
+        - Note similar artists from Last.fm: {{lastfm_data.similar|join(', ')}}
+
+    2. Genre Evolution & Trends:
+        - Analyze genre development using:
+        • Spotify release dates (oldest: {{spotify_data.albums[-1].release_date}})
+        • Last.fm play patterns (top tracks: {{lastfm_data.top_tracks[0].name}})
+        - Identify audience shifts through Last.fm listener trends
+
+    3. Growth Indicators:
+        - Compare platform metrics:
+        • Spotify followers vs Last.fm listeners ratio
+        • Track popularity across platforms
+        - Assess cross-platform appeal using similar artists
+
+    4. Media Suitability:
+        - Recommend applications based on:
+        • Spotify audio features
+        • Last.fm listener demographics
+        - Highlight scene types considering:
+        • Top tracks from both platforms
+        • Genre characteristics from crowd-sourced tags
+
+    5. Sound Analysis:
+        - Describe style using:
+        • Spotify instrumentation data
+        • Last.fm user-generated tags
+        - Identify signature elements from:
+        • Most played tracks (Last.fm)
+        • Top albums (Spotify)
+
+    6. Technical Strategies:
+        - Suggest placements based on:
+        • Spotify's available instrumental versions
+        • Last.fm's foreground/background play patterns
+        - Optimize using:
+        • Edit points from track durations
+        • Emotional arcs from lyrical analysis
+
+    RESPONSE TEMPLATE - MUST FOLLOW EXACTLY:
+    {
+        "genre_info": {
+            "genre": ["{{genre}}"],  // Always array
+            "score": [{{projected_growth}}],     // Use projected growth score
+            "compatibility": ["{{genre_compatibility}}"]  // use compatibility from above
+        },
+        "genre_evolution": [
+            "Evolution statement 1",
+            "Evolution statement 2"
+        ],
+        "growth_indicators": [
+            "Indicator 1",
+            "Indicator 2",
+            "Indicator 3"
+        ],
+        "market_position": [
+            "Position statement 1",
+            "Position statement 2"
+        ],
+        "genres": [
+            "Genre 1",
+            "Genre 2",
+            "Genre 3"
+        ],
+        "sceneTypes": [
+            "Scene type 1",
+            "Scene type 2",
+            "Scene type 3",
+            "Scene type 4"
+        ],
+        "potentialGenres": [
+            "Alternative genre 1",
+            "Alternative genre 2"
+        ],
+        "placementStrategies": [
+            "Strategy 1",
+            "Strategy 2",
+            "Strategy 3",
+            "Strategy 4"
+        ],
+        "best_uses": [
+            "Use case 1",
+            "Use case 2",
+            "Use case 3"
+        ],
+        "impact_statements": [
+            "Impact 1",
+            "Impact 2"
+        ],
+        "sound_elements": [
+            "Element 1",
+            "Element 2",
+            "Element 3",
+            "Element 4"
+        ],
+        "technical_details": [
+            "Feature 1",
+            "Feature 2",
+            "Feature 3",
+            "Feature 4"
+        ]
+    }
+"""
     def get_claude(spotify_data, lastfm_data, genre, artist_name, prompt=prompt):
+        print(prompt)
         try:
             formatted_prompt = (
                 prompt.replace("{{genre}}", genre)
@@ -310,10 +444,20 @@ def get_artist_analysis(
             return None
 
     if spotify_CLIENT_ID and spotify_CLIENT_SECRET and artist:
-        artist_origin = get_artist_country(artist)
-        print("Artist Origin:", artist_origin)
-        if not artist_origin in ['US', 'CA', 'MX', 'GB', 'FR', 'DE', 'IT', 'ES', 'NL', 'BE', 'CH', 'AT', 'SE', 'NO', 'DK', 'FI', 'IE', 'PT', 'LU', 'IS']:
-            return {'artist_name': artist, 'analysis': {"artist_origin": {"message": f"We cannot provide analysis for artists from {artist_origin}."}}} 
+        if artist_country is  None or artist_country=="null":
+            artist_origin = get_artist_country(artist)
+            print("Artist Origin:", artist_origin)
+            if not artist_origin in ['US', 'CA', 'MX', 'GB', 'FR', 'DE', 'IT', 'ES', 'NL', 'BE', 'CH', 'AT', 'SE', 'NO', 'DK', 'FI', 'IE', 'PT', 'LU', 'IS']:
+                return {'artist_name': artist, 'analysis': {"artist_origin": {"message": f"We cannot provide analysis for artists from {artist_origin}."}}} 
+        else:
+            prompt = prompt2
+            prompt = prompt.replace("{{artist_country}}", artist_country)
+            prompt = prompt.replace("{{projected_growth}}", projected_growth)
+            prompt = prompt.replace("{{genre_compatibility}}", genre_compatibility)
+            prompt = prompt.replace("{{artist_name}}", artist)
+            prompt = prompt.replace("{{genre}}", genre)
+            artist_origin = artist_country
+        print("Artist Genre: ", genre)
 
         CLIENT_ID = spotify_CLIENT_ID
         CLIENT_SECRET = spotify_CLIENT_SECRET
@@ -328,16 +472,13 @@ def get_artist_analysis(
         
         lastfm_data = fetch_lastfm_artist_data(artist)
 
-        artist_name = artist_details['name']
+        artist_name = artist
         # popularity = artist_details['popularity']
-        genre = artist_details['genres'][0] if artist_details['genres'] else None
-        # print("Spotify Genre:", genre)
-
-        genre = (artist_details['genres'][0] if artist_details['genres'] 
-            else (fetch_genre_from_musicbrainz(artist_name)[0] 
-            if fetch_genre_from_musicbrainz(artist_name) 
-            else "Classic"))
-            # print("MusicBrainz Genre:", genre)
+        if genre is None:
+            genre = (artist_details['genres'][0] if artist_details['genres'] 
+                else (fetch_genre_from_musicbrainz(artist_name)[0] 
+                if fetch_genre_from_musicbrainz(artist_name) 
+                else "Classic"))
 
         spotify_data = {
             'popularity': artist_details['popularity'],
@@ -345,7 +486,7 @@ def get_artist_analysis(
             'top_tracks': artist_details['top_tracks'],
             'albums': artist_details['albums']
         }
-        response = get_claude(spotify_data, lastfm_data, genre, artist_name)
+        response = get_claude(spotify_data, lastfm_data, genre, artist_name, prompt)
         # print("Response: ", response)
 
         try:
